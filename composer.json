@@ -1,0 +1,24 @@
+{
+    "name": "super-kernel/swoole",
+    "description": "This package summarizes all configuration items of swoole extension.",
+    "type": "library",
+    "license": "MIT",
+    "autoload": {
+        "psr-4": {
+            "SuperKernel\\Swoole\\": "src/"
+        }
+    },
+    "authors": [
+        {
+            "name": "wheakerd",
+            "email": "wheakerd@gmail.com"
+        }
+    ],
+    "minimum-stability": "stable",
+    "require": {
+        "php": ">=8.4"
+    },
+    "require-dev": {
+        "swoole/ide-helper": "^6.0"
+    }
+}
