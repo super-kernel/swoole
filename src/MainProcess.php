@@ -70,7 +70,10 @@ final class MainProcess
      */
     public function addProcess(callable $callback): void
     {
-        $this->add(function () use ($callback): void {
+        if ($this->started || $this->owner !== getmypid()) {
+            throw new LogicException('Main process tasks must be added by their owner before startup.');
+        }
+        $this->callbacks->enqueue(function () use ($callback): void {
             $this->children->spawn($callback(...), $this->pidFile);
         });
         $this->hasProcesses = true;
@@ -110,7 +113,23 @@ final class MainProcess
                 $this->pidFile = new PidFile($this->config->pidFile());
             }
             if ($this->config->daemon()) {
-                $this->daemonize();
+                $input = @fopen('/dev/null', 'r');
+                if (!is_resource($input)) {
+                    throw new SupervisorException('Unable to open daemon standard input.');
+                }
+                try {
+                    $daemonized = Process::daemon(true, true, [
+                        $input,
+                    ]);
+                } catch (Throwable $daemonFailure) {
+                    fclose($input);
+
+                    throw $daemonFailure;
+                }
+                fclose($input);
+                if (!$daemonized) {
+                    throw new SupervisorException('Unable to daemonize MainProcess.');
+                }
                 $this->owner = getmypid();
             }
             $this->pidFile?->publish();
@@ -129,25 +148,6 @@ final class MainProcess
             $this->pidFile?->close();
             $this->pidFile = null;
             $this->children->restore();
-        }
-    }
-
-    private function daemonize(): void
-    {
-        $input = @fopen('/dev/null', 'r');
-        try {
-            if (!is_resource($input)) {
-                throw new SupervisorException('Unable to open daemon standard input.');
-            }
-            if (!Process::daemon(true, true, [
-                $input,
-            ])) {
-                throw new SupervisorException('Unable to daemonize MainProcess.');
-            }
-        } finally {
-            if (is_resource($input)) {
-                fclose($input);
-            }
         }
     }
 }
