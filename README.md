@@ -20,15 +20,6 @@ Implementation helpers retain an `@internal` boundary; a responsibility namespac
 
 Use the following component declarations:
 
-- `Constants\SupervisorSignal`
-- `Process\ChildProcessGroup`
-- `Process\ChildReaper`
-- `Process\ChildShutdown`
-- `Process\ChildWaiter`
-- `Process\PendingSignals`
-- `Process\PidFile`
-- `Process\SupervisorState`
-- `Runtime\RuntimeSettings`
 - `Runtime\ProcessRuntime`
 
 ## Command
