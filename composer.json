@@ -19,7 +19,7 @@
     "require-dev": {
         "ext-posix": "*",
         "friendsofphp/php-cs-fixer": "^3.95.27",
-        "phpunit/phpunit": "^13.4.3"
+        "phpunit/phpunit": "^13.4.5"
     },
     "autoload": {
         "psr-4": {
