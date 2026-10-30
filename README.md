@@ -7,11 +7,12 @@ Requires PHP 8.4.27 or later in the 8.4.x series, `ext-pcntl` and the Swoole ext
 
 Paths below are relative to `src/` and the package namespace.
 
-| Directory | Responsibility |
-| --- | --- |
-| `Process` | `ChildProcessGroup` and `PidFile`: child supervision, signal state, and PID-lock ownership. |
-| `Runtime` | `ProcessRuntime` composes a run; `RuntimeSettings` applies native runtime options. |
-| `Command / Event / Config / Provider` | CLI activation, registration events, configuration contract, and validating factory. |
+| Directory                             | Responsibility                                                                                                                                                                                        |
+|---------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `Process`                             | `ChildProcessGroup` and `PidFile`: child supervision, signal state, and PID-lock ownership. The group composes `SupervisorState`, `ChildShutdown`, `ChildReaper`, `PendingSignals` and `ChildWaiter`. |
+| `Constants`                           | `SupervisorSignal`: the signals the supervisor blocks and consumes, in handler-reset order.                                                                                                           |
+| `Runtime`                             | `ProcessRuntime` composes a run; `RuntimeSettings` applies native runtime options.                                                                                                                    |
+| `Command / Event / Config / Provider` | CLI activation, registration events, configuration contract, and validating factory.                                                                                                                  |
 
 Implementation helpers retain an `@internal` boundary; a responsibility namespace does not make them extension points.
 
@@ -19,9 +20,6 @@ Implementation helpers retain an `@internal` boundary; a responsibility namespac
 
 Use the following component declarations:
 
-- `Process\ChildProcessGroup`
-- `Process\PidFile`
-- `Runtime\RuntimeSettings`
 - `Runtime\ProcessRuntime`
 
 ## Command
@@ -168,11 +166,11 @@ final readonly class SwooleConfig implements SwooleConfigInterface
 
 Inject `SwooleConfigInterface`; the application source supplies the defaults below.
 
-| Method | Default | Meaning |
-| --- | --- | --- |
-| `displayErrors()` | `true` | Controls `swoole.display_errors`, independently of PHP's `display_errors` and the logger. |
-| `socketBufferSize()` | `8388608` (8 MiB) | Default Swoole socket buffer capacity in bytes, from 1 through 4294967295. |
-| `enablePreemptiveScheduler()` | `false` | Enables preemptive scheduling when a runtime activates its coroutines. |
+| Method                        | Default           | Meaning                                                                                   |
+|-------------------------------|-------------------|-------------------------------------------------------------------------------------------|
+| `displayErrors()`             | `true`            | Controls `swoole.display_errors`, independently of PHP's `display_errors` and the logger. |
+| `socketBufferSize()`          | `8388608` (8 MiB) | Default Swoole socket buffer capacity in bytes, from 1 through 4294967295.                |
+| `enablePreemptiveScheduler()` | `false`           | Enables preemptive scheduling when a runtime activates its coroutines.                    |
 
 After event registration, a non-empty MainProcess applies these options before initialization and child creation.
 `Runtime\RuntimeSettings` updates their INI values and uses `Swoole\Coroutine::set()` to refresh the socket default
