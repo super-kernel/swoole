@@ -4,10 +4,6 @@ declare(strict_types=1);
 
 namespace SuperKernel\Swoole\Process;
 
-use SuperKernel\Swoole\Constants\SupervisorSignal;
-
-use function pcntl_sigtimedwait;
-
 use const SIGINT;
 use const SIGTERM;
 
@@ -19,9 +15,10 @@ use const SIGTERM;
 final readonly class PendingSignals
 {
     public function __construct(
-        private SupervisorState $state,
-        private ChildShutdown   $shutdown,
-        private ChildReaper     $reaper,
+        private SupervisorState          $state,
+        private ChildShutdown            $shutdown,
+        private ChildReaper              $reaper,
+        private SupervisorSignalReceiver $signals,
     )
     {
     }
@@ -33,8 +30,7 @@ final readonly class PendingSignals
             return !$this->state->stopping;
         }
         while (true) {
-            $info = [];
-            $signal = pcntl_sigtimedwait(SupervisorSignal::numbers(), $info, 0, 1);
+            $signal = $this->signals->poll();
             if (false === $signal) {
                 return !$this->state->stopping;
             }

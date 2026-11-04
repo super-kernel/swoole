@@ -11,6 +11,7 @@ use SuperKernel\Swoole\Exception\SupervisorException;
 use Swoole\Process;
 use Throwable;
 
+use function function_exists;
 use function is_int;
 use function pcntl_signal;
 use function pcntl_sigprocmask;
@@ -29,14 +30,24 @@ final class ChildProcessGroup
     private readonly ChildShutdown $shutdown;
     private readonly PendingSignals $pendingSignals;
     private readonly ChildWaiter $waiter;
+    private readonly SupervisorSignalReceiver $signals;
 
     public function __construct(private readonly StdoutLoggerInterface $logger)
     {
         $this->state = new SupervisorState();
+        $this->signals = new SupervisorSignalReceiver(
+            function_exists('pcntl_sigwaitinfo') && function_exists('pcntl_sigtimedwait'),
+        );
         $this->shutdown = new ChildShutdown($this->state);
         $reaper = new ChildReaper($this->state, $this->shutdown);
-        $this->pendingSignals = new PendingSignals($this->state, $this->shutdown, $reaper);
-        $this->waiter = new ChildWaiter($this->state, $this->shutdown, $reaper, $this->pendingSignals);
+        $this->pendingSignals = new PendingSignals($this->state, $this->shutdown, $reaper, $this->signals);
+        $this->waiter = new ChildWaiter(
+            $this->state,
+            $this->shutdown,
+            $reaper,
+            $this->pendingSignals,
+            $this->signals,
+        );
     }
 
     /** @throws SupervisorException if supervisor signals cannot be blocked before startup */
@@ -46,6 +57,7 @@ final class ChildProcessGroup
             throw new SupervisorException('Unable to block supervisor signals before startup.');
         }
         $this->state->signalsBlocked = true;
+        $this->signals->install();
     }
 
     /**
@@ -122,6 +134,7 @@ final class ChildProcessGroup
         try {
             $this->pendingSignals->drain();
         } finally {
+            $this->signals->uninstall();
             pcntl_sigprocmask(SIG_SETMASK, $this->signalMask);
             $this->state->signalsBlocked = false;
         }
