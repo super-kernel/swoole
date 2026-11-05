@@ -4,11 +4,9 @@ declare(strict_types=1);
 
 namespace SuperKernel\Swoole\Process;
 
-use SuperKernel\Swoole\Constants\SupervisorSignal;
 use SuperKernel\Swoole\Exception\SupervisorException;
 
 use function pcntl_get_last_error;
-use function pcntl_sigwaitinfo;
 
 use const PCNTL_EINTR;
 use const SIGINT;
@@ -22,10 +20,11 @@ use const SIGTERM;
 final readonly class ChildWaiter
 {
     public function __construct(
-        private SupervisorState $state,
-        private ChildShutdown   $shutdown,
-        private ChildReaper     $reaper,
-        private PendingSignals  $pendingSignals,
+        private SupervisorState          $state,
+        private ChildShutdown            $shutdown,
+        private ChildReaper              $reaper,
+        private PendingSignals           $pendingSignals,
+        private SupervisorSignalReceiver $signals,
     )
     {
     }
@@ -39,7 +38,7 @@ final readonly class ChildWaiter
             if ([] === $this->state->children) {
                 return;
             }
-            $signal = pcntl_sigwaitinfo(SupervisorSignal::numbers());
+            $signal = $this->signals->wait();
             if (false === $signal) {
                 if (PCNTL_EINTR === pcntl_get_last_error()) {
                     continue;
