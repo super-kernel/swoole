@@ -13,7 +13,7 @@
         "super-kernel/command": "self.version",
         "super-kernel/config": "self.version",
         "super-kernel/contract": "self.version",
-        "super-kernel/server": "self.version",
+        "super-kernel/server": "dev-main || ^1.0.0-alpha.1",
         "symfony/console": "^8.1.9"
     },
     "require-dev": {
