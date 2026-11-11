@@ -4,108 +4,106 @@
 
 # SuperKernel Swoole
 
-`super-kernel/swoole` provides the `swoole:start` console command and main process supervision for SuperKernel. It requires `ext-pcntl` and the Swoole extension `>=6.2.3 <6.3`.
+`super-kernel/swoole` provides the `swoole:start` command and the main process that supervises an application's Swoole runtimes, such as the server and the process pool, as concurrent child processes.
 
-## Command
+## Installation
 
 ```bash
-./bin/bootstrap.php swoole:start
+composer require super-kernel/swoole
 ```
 
-`SuperKernel\Swoole\Command\SwooleStartCommand` registers `swoole:start`. Creating the command, showing help, or listing commands does not resolve runtime dependencies. During execution the command resolves `MainProcess` and the event dispatcher from the container, synchronously dispatches `new MainProcessCreated($mainProcess)`, and starts that same `MainProcess`. It accepts no action argument or command-specific options; Symfony's standard help and output options remain available. Configuration failures prevent event dispatch and startup, even when no runtime tasks are mounted.
+The package needs the `pcntl` extension and the Swoole extension `>=6.2.3 <6.3`, and it installs `super-kernel/server`. The application must declare a `SwooleConfigInterface` configuration source; the command runs in a console application, such as one created from `super-kernel/skeleton`, and needs SKERNEL to build the project.
 
-[Server](https://github.com/super-kernel/server/blob/main/README.md) mounts a child that starts `ServerInterface` when its own `SwooleServerConfigInterface::enable()` returns true. When `super-kernel/process` is installed with registered tasks, it mounts a separate child that owns the native Pool. Both runtimes can run concurrently beneath the main supervisor. Create native runtimes and business connections inside their child callbacks, and begin supervision in a clean CLI before reactors or asynchronous work. This also applies to runtimes containing only initialization callbacks, because startup configures process-wide Swoole options before any callback runs.
+## What it provides
 
-Other installed components can register independent commands such as `swoole:watch` with `SuperKernel\Command\Attribute\Command`. Full command names and aliases must be unique; this package does not reserve the whole `swoole:` prefix.
+- The `swoole:start` command, which lets every listener mount its work and then starts the main process.
+- `MainProcess`, which runs initialization callbacks in order and supervises the child processes mounted on it.
+- The `MainProcessCreated` event, through which packages and applications mount their work.
+- Daemon mode with an exclusively locked PID file that holds the supervisor's PID.
+- Shutdown on `SIGTERM` or `SIGINT`: every child is stopped and reaped before the command returns.
+- `SwooleConfigInterface`, the validated settings for daemon mode, the PID file, and process-wide Swoole options.
 
-## Main supervisor
+It does not:
 
-`MainProcess::add(callable $callback)` registers initialization in the supervisor. Its parameterless `start()` runs those callbacks once in FIFO order; a blocking initialization callback must return before startup proceeds. `MainProcess::addProcess(callable $callback)` mounts an independent `Swoole\Process` child with no framework pipe or automatic coroutine scheduler. Forks follow mounting order; child execution is concurrent. Callbacks take no arguments. Register signal handlers and construct native servers or Pools inside the child callback. Registration closes at startup, and only the creator may start the supervisor, once.
+- restart a child that exits or fails;
+- enforce a shutdown deadline on a child that ignores `SIGTERM`;
+- expose child PIDs or a process registry;
+- write a log file or capture the children's output;
+- create servers or pools itself; `super-kernel/server` and `super-kernel/process` mount them.
 
-```php
-use SuperKernel\Swoole\MainProcess;
+## Quick start
 
-// $main is the application's injected MainProcess service.
-$main->add(static function (): void {
-    // Initialize supervisor-owned state here.
-});
-$main->addProcess(static function (): void {
-    // Create and run a child-owned runtime here.
-});
-$main->start(); // Returns after all mounted children have exited and been reaped.
-```
-
-`MainProcessCreated` exposes only the supervisor as `mainProcess`; listeners use it to mount their callbacks, and the event exposes no process registry or child PID list. `ProcessRuntime::start(SwooleConfigInterface $config)` dispatches the same event for programmatic callers.
-
-When constructing these services directly:
-
-- `MainProcess` takes the application's `StdoutLoggerInterface` and its required `SwooleConfigInterface`.
-- `MainProcessCreated` takes only the `MainProcess` instance.
-- `ProcessRuntime` takes the event dispatcher and the logger, and passes the logger to each fresh `MainProcess`.
-- `SwooleStartCommand` takes only `Psr\Container\ContainerInterface`; direct construction supplies its name and description without resolving runtime services. The command is meant for a single execution per framework run, and `MainProcess` rejects repeated startup.
-
-Daemon and PID failures and unsuccessful child exits throw `SuperKernel\Swoole\Exception\SupervisorException`. A child exception is logged at Error level through the injected `StdoutLoggerInterface` and exits with code 1; it cannot cross the fork as the same PHP object. MainProcess then stops the remaining children, reaps them, and reports the failure. Supervisor initialization exceptions propagate unchanged after the children are stopped and reaped.
-
-## Configuration and shutdown
-
-Declare an application source for `SuperKernel\Swoole\Config\SwooleConfigInterface` using `SuperKernel\Attribute\Configuration`. For example:
+In an application created from `super-kernel/skeleton`, which already declares `src/Config/SwooleConfig.php`, this listener mounts an initialization callback and a child process next to the HTTP server. Save it as `src/Listener/MountReportWriter.php`:
 
 ```php
-namespace Src\Config;
+<?php
 
-use SuperKernel\Attribute\Configuration;
-use SuperKernel\Swoole\Config\SwooleConfigInterface;
+declare(strict_types=1);
 
-#[Configuration(SwooleConfigInterface::class)]
-final readonly class SwooleConfig implements SwooleConfigInterface
+namespace Src\Listener;
+
+use SuperKernel\Attribute\Listener;
+use SuperKernel\Contract\ListenerInterface;
+use SuperKernel\Swoole\Event\MainProcessCreated;
+
+#[Listener]
+final readonly class MountReportWriter implements ListenerInterface
 {
-    public function daemon(): bool
+    public function listen(): array
     {
-        return false;
+        return [
+            MainProcessCreated::class,
+        ];
     }
 
-    public function pidFile(): ?string
+    public function process(object $event): void
     {
-        return null;
-    }
+        assert($event instanceof MainProcessCreated);
 
-    public function displayErrors(): bool
-    {
-        return true;
-    }
+        $event->mainProcess->add(static function (): void {
+            echo 'Supervisor initialized', PHP_EOL;
+        });
 
-    public function socketBufferSize(): int
-    {
-        return 8 * 1024 * 1024;
-    }
-
-    public function enablePreemptiveScheduler(): bool
-    {
-        return false;
+        $event->mainProcess->addProcess(static function (): void {
+            echo 'Report writer finished', PHP_EOL;
+        });
     }
 }
 ```
 
-Inject `SwooleConfigInterface`; the application source supplies the defaults below.
+Build the project and start it:
 
-| Method                        | Default           | Meaning                                                                                   |
-|-------------------------------|-------------------|-------------------------------------------------------------------------------------------|
-| `displayErrors()`             | `true`            | Controls `swoole.display_errors`, independently of PHP's `display_errors` and the logger. |
-| `socketBufferSize()`          | `8388608` (8 MiB) | Default Swoole socket buffer capacity in bytes, from 1 through 4294967295.                |
-| `enablePreemptiveScheduler()` | `false`           | Enables preemptive scheduling when a runtime activates its coroutines.                    |
+```bash
+skernel build
+php bin/bootstrap.php swoole:start
+```
 
-After event registration, a MainProcess with registered callbacks applies these options before initialization and child creation. It updates their INI values and uses `Swoole\Coroutine::set()` to refresh the socket default and replace an earlier preemptive-scheduler option, while keeping unrelated coroutine options. This creates no coroutine, reactor or asynchronous worker. Mounted children inherit the settings and still own scheduler activation. These are process-wide startup settings and remain applied when MainProcess returns; an empty queue leaves them unchanged. Do not use this configuration for per-request overrides or to reconfigure an already active runtime.
+It prints `Supervisor initialized` and `Report writer finished` next to the server's log lines. The server keeps running; press Ctrl+C to stop it.
 
-The supported keys follow Swoole 6.2.3, including `swoole.socket_buffer_size`; `swoole.enable_coroutine` is not an INI directive. `swoole.use_shortname` and `swoole.enable_library` remain PHP startup configuration and are not methods on this interface. Changing the library INI value after PHP starts cannot unload the already loaded library. See the upstream [INI registration and initialization](https://github.com/swoole/swoole-src/blob/v6.2.3/ext-src/php_swoole.cc) and [coroutine configuration](https://github.com/swoole/swoole-src/blob/v6.2.3/ext-src/swoole_coroutine_scheduler.cc).
+## Public surface
 
-For daemon mode, return `true` from `daemon()` and an absolute path from `pidFile()`.
+| Name | Kind | Purpose |
+| --- | --- | --- |
+| `swoole:start` | Command | Dispatches `MainProcessCreated`, then starts the main process and returns when every child has exited. |
+| `SuperKernel\Swoole\Event\MainProcessCreated` | Event | Carries the `MainProcess` as `mainProcess` before anything mounted has run. |
+| `SuperKernel\Swoole\MainProcess` | Class | `add()` mounts an initialization callback, `addProcess()` mounts a child process, `start()` runs them. |
+| `SuperKernel\Attribute\Configuration` | Attribute | Declares the application's `SwooleConfigInterface` source. |
+| `SuperKernel\Swoole\Config\SwooleConfigInterface` | Interface | Daemon mode, PID file, `swoole.display_errors`, socket buffer size, and preemptive scheduling. |
+| `SuperKernel\Swoole\Runtime\ProcessRuntime` | Class | `start($config)` creates a main process, dispatches its event, and starts it without the command. |
 
-The configuration is looked up and validated when `swoole:start` resolves MainProcess during execution, and the container supplies that same validated application object as `SwooleConfigInterface`. A missing source raises `ConfigurationNotFoundException`, and invalid paths or socket buffer sizes raise `InvalidArgumentException`; DI can wrap these failures in its container resolution exception. Resolving the configuration does not apply the process-wide settings. Customize values with `#[Configuration]`; a DI `Provider` override would bypass validation. Keep getter values stable throughout the runtime: the source is not copied or frozen.
+## Behavior to know
 
-The supervisor acquires an exclusive PID-file lock before daemonization and writes its own final PID after daemonization, before initialization and child startup. It holds the lock until all mounted children have been reaped. Child PIDs remain private; forked children close their inherited PID-file handle without releasing the supervisor's lock. The file never contains a Server, Pool or worker PID. Launcher success or a PID file does not indicate child readiness. An empty MainProcess queue creates no daemon or PID file and emits no log records.
+- The configuration is read and validated when `swoole:start` runs, before any listener. A missing source raises `SuperKernel\Config\Exception\ConfigurationNotFoundException` with `No configuration source is registered for SuperKernel\Swoole\Config\SwooleConfigInterface.`; a relative PID path, or daemon mode without one, raises `Use an absolute PID file path; daemon mode requires one.`
+- Callbacks take no arguments and run once, in the order they were mounted; children run concurrently. Mounting after `start()` or starting twice raises `LogicException`.
+- With anything mounted, `start()` must run in a clean CLI, before any coroutine, event loop, or asynchronous work: otherwise it raises `Start MainProcess in a clean CLI before reactors or asynchronous work.` Create servers, pools, and connections inside the child callback.
+- An exception in a child is logged as `Mounted process failed: <message>` and ends that child with exit code 1; the supervisor then stops and reaps the other children and raises `SuperKernel\Swoole\Exception\SupervisorException` with `A mounted process failed with exit code 1 and signal 0.` An exception in an initialization callback propagates unchanged after the children are stopped.
+- With nothing mounted, `start()` returns at once and creates no daemon, PID file, or log record.
+- Listeners are found in the build metadata: run `skernel build` again after adding, removing, or changing a listener or the configuration class, or start with `skernel run`, which builds first.
 
-MainProcess only logs, at Error level through its injected `StdoutLoggerInterface`, daemon supervisor failures and child exceptions. The selected logger determines the output destination. The default writes to stdout; an application can bind its own `StdoutLoggerInterface`, for example built with `LoggerFactory`, to log to a file. MainProcess does not capture or forward output. Daemonization redirects only stdin to `/dev/null` and leaves stdout and stderr unchanged. There is no log-file setting.
+## Documentation
 
-Send SIGTERM or SIGINT to the PID in this file. MainProcess sends SIGTERM to its live direct children in mounting order, then waits for all of them and removes its PID file. Sending order does not determine callback execution or exit order. Each child runtime handles its descendants: the Pool parent shuts down and reaps Pool workers, while Server owns its native workers. MainProcess waits only for the PIDs it recorded, so unrelated child exits are preserved. The signal wait uses PHP's [PCNTL signal mask](https://www.php.net/manual/en/function.pcntl-sigprocmask.php) and [signal waiting](https://www.php.net/manual/en/function.pcntl-sigwaitinfo.php); the original mask is restored on return.
+The developer documentation covers mounting, configuration and runtime settings, daemon mode and the PID file, signals and shutdown, logging, the error messages, and what not to do: [SuperKernel Swoole](https://github.com/super-kernel/.github/blob/main/docs/components/swoole.md).
 
-A normally returning child is reaped without replacement. An unsuccessful child exit stops its remaining siblings. There is no automatic restart or shutdown deadline at the main-supervisor level, so a child that ignores SIGTERM can delay shutdown indefinitely. Native Pool keeps its own worker replacement and shutdown behavior; see [Process's lifecycle contract](https://github.com/super-kernel/process/blob/main/README.md#pool-lifecycle-and-ipc).
+## License
+
+Released under the MIT License. See [LICENSE](LICENSE).
